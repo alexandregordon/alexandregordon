@@ -1,0 +1,145 @@
+/* Details of accelerometer can be found at:
+ *  https://www.analog.com/media/en/technical-documentation/data-sheets/adxl356-357.pdf
+ *  Code modified from ADXL355 code from Analog
+ *  Created 23 November 2021
+ *  by Alex Gordon
+ */
+
+#include <SPI.h>
+
+// Memory register addresses:
+const int RANGE = 0x2C;
+const int POWER_CTL = 0x2D;
+const int DEVID_AD = 0x00;
+const int DEVID_MST = 0x01;
+const int PARTID = 0x02;
+const int REVID = 0x03;
+const int STAS = 0x04;
+const int FIFO = 0x11;
+const int FILTER = 0x28;
+
+// Device values
+const int RANGE_2G = 1;
+const int RANGE_20G = 2;
+const int RANGE_40G = 3;
+const int MEASURE_MODE = 0x06; // Only accelerometer
+
+// Operations
+const int READ_BYTE = 0x01;
+const int WRITE_BYTE = 0x00;
+
+// Pins used for the connection with the sensor
+const int CHIP_SELECT_PIN = 5;
+
+unsigned int result;
+
+void setup() {
+  Serial.begin(115200);
+  //SPI Pin out setup
+  pinMode(23, OUTPUT);    // MOSI for SPI
+  pinMode(19, INPUT);     // MISO for SPI
+  pinMode(18, OUTPUT);    // SCK for SPI
+  SPI.begin();
+  SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  // Initalize the  data ready and chip select pins:
+  pinMode(CHIP_SELECT_PIN, OUTPUT);
+
+  //Configure ADXL355:
+  writeRegister(RANGE, RANGE_40G); 
+  writeRegister(POWER_CTL, MEASURE_MODE); // Enable measure mode
+  writeRegister(FILTER, 0x01); //Set accelerometer filter and data rate. Data Rate 2000Hz. Low Pass Filter 500Hz. No high pass filter.
+
+  
+  // Give the sensor time to set up:
+  delay(100);
+
+  readRegistry(DEVID_AD);
+  Serial.println(result);
+  readRegistry(DEVID_MST);
+  Serial.println(result);
+  readRegistry(PARTID);
+  Serial.println(result);
+  readRegistry(REVID);
+  Serial.println(result);
+  readRegistry(STAS);
+  Serial.println(result, BIN);
+}
+
+void loop() {
+
+  int axisAddress[] = {FIFO};
+  int accnData[9] = {0};
+  int dataSize = 9;
+
+  readMultipleData(axisAddress, dataSize, accnData);
+
+  int xdata = (accnData[0] << 12) | (accnData[1] << 4) | (accnData[2] >> 4);
+  int zdata = (accnData[3] << 12) | (accnData[4] << 4) | (accnData[5] >> 4);
+  int ydata = (accnData[6] << 12) | (accnData[7] << 4) | (accnData[8] >> 4);
+
+  if (xdata & 0x80000) {
+        xdata = (xdata & 0x7ffff) - 0x80000;
+  }
+  if (ydata & 0x80000) {
+        ydata = (ydata & 0x7ffff) - 0x80000;
+  }
+  if (zdata & 0x80000) {
+        zdata = (zdata & 0x7ffff) - 0x80000;
+  }
+
+  float calib = 1.0/(double) 12800;
+  float xdata1=(xdata * calib);
+  float ydata1=(ydata * calib);
+  float zdata1=(zdata * calib);
+  
+  // Print axis
+  Serial.print("X =");
+  Serial.print(xdata1);
+  Serial.print(", ");
+  
+  Serial.print("Y=");
+  Serial.print(ydata1);
+  Serial.print(", ");
+
+  Serial.print("Z=");
+  Serial.println(zdata1);
+ 
+}
+
+/* 
+ * Write registry in specific device address
+ */
+void writeRegister(byte thisRegister, byte thisValue) {
+  byte dataToSend = (thisRegister << 1) | WRITE_BYTE;
+  digitalWrite(CHIP_SELECT_PIN, LOW);
+  SPI.transfer(dataToSend);
+  SPI.transfer(thisValue);
+  digitalWrite(CHIP_SELECT_PIN, HIGH);
+}
+
+/* 
+ * Read registry in specific device address
+ */
+unsigned int readRegistry(byte thisRegister) {
+  result = 0;
+  byte dataToSend = (thisRegister << 1) | READ_BYTE;
+
+  digitalWrite(CHIP_SELECT_PIN, LOW);
+  SPI.transfer(dataToSend);
+  result = SPI.transfer(0x00);
+  digitalWrite(CHIP_SELECT_PIN, HIGH);
+  return result;
+}
+
+/* 
+ * Read multiple registries
+ */
+void readMultipleData(int *addresses, int dataSize, int *readedData) {
+  digitalWrite(CHIP_SELECT_PIN, LOW);
+  for(int i = 0; i < dataSize; i = i + 1) {
+    byte dataToSend = (addresses[i] << 1)| READ_BYTE;  
+    SPI.transfer(dataToSend);
+    readedData[i] = SPI.transfer(0x00);
+  }
+  digitalWrite(CHIP_SELECT_PIN, HIGH);
+}
